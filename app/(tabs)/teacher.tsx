@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Platform,
   Pressable,
@@ -16,7 +16,11 @@ import QRCode from 'react-native-qrcode-svg';
 
 import AppButton from '@/components/AppButton';
 import { COLORS } from '@/constants/colors';
-import { createEvent } from '@/lib/database';
+import { createEvent } from '@/lib/events';
+import { buildQRPayload } from '@/lib/qr';
+import { useFocusEffect } from 'expo-router';
+import { getProfile, Role } from '@/lib/profiles';
+import { useAuth } from '@/lib/auth';
 
 function toLocalISO(date: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -53,6 +57,10 @@ export default function TeacherScreen() {
   const [editingPart, setEditingPart] = useState<'date' | 'time'>('date');
   const [payload, setPayload] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  const { user } = useAuth();
+  const [role, setRole] = useState<Role | null>(null);
+  const [roleLoading, setRoleLoading] = useState(true);
 
   const isAndroid = Platform.OS === 'android';
 
@@ -112,19 +120,49 @@ export default function TeacherScreen() {
       return;
     }
 
-    createEvent(event).then(() => {
+    createEvent(event).then(({ error }) => {
+      if (error) {
+        setMessage('Could not save the event. Please try again.');
+        return;
+      }
       setMessage('Event saved! Scan the QR with the Scan tab to test it.');
-      setPayload(
-        JSON.stringify({
-          v: 1,
-          event: event.eventId,
-          title: event.title,
-          start: event.start,
-          end: event.end,
-        })
-      );
+      setPayload(buildQRPayload(event));
     });
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      if (!user) {
+        setRoleLoading(false);
+        return () => { active = false; };
+      }
+      getProfile(user.id).then((profile) => {
+        if (!active) return;
+        setRole(profile?.role ?? 'student');
+        setRoleLoading(false);
+      });
+      return () => { active = false; };
+    }, [user])
+  );
+
+  if (roleLoading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}> 
+        <Text style={styles.subtitle}>Checking your account...</Text>
+      </View>
+    );
+  }
+
+  if (role !== 'teacher') {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}> 
+        <Ionicons name="lock-closed-outline" size={48} color={COLORS.textSecondary} />
+        <Text style={[styles.title, { marginTop: 12 }]}>Teachers Only</Text>
+        <Text style={styles.subtitle}>Only teacher accounts can create events.</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView

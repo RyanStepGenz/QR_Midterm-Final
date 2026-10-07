@@ -22,6 +22,7 @@ export default function ProfileScreen() {
       setLoading(false);
     }
   };
+  
 
   return (
     <View style={styles.container}>
