@@ -36,6 +36,132 @@ export type TeacherEventSummary = {
   attendeeCount: number;
 };
 
+export type StudentEventStatus = 'open' | 'upcoming' | 'closed';
+
+export type StudentEventPreview = {
+  id: string;
+  eventCode: string;
+  title: string;
+  startTime: string | null;
+  endTime: string | null;
+  status: StudentEventStatus;
+};
+
+export type StudentDashboardData = {
+  totalAttended: number;
+  presentCount: number;
+  lateCount: number;
+  attendanceRate: number;
+  eligibleEvents: number;
+  upcomingEvents: StudentEventPreview[];
+  recentRecords: AttendanceRecord[];
+  unreadNotificationCount: number;
+};
+
+function getEventStatus(startTime: string | null, endTime: string | null): StudentEventStatus {
+  const now = Date.now();
+
+  if (!startTime) {
+    return 'closed';
+  }
+
+  const start = new Date(startTime).getTime();
+  const end = endTime ? new Date(endTime).getTime() : null;
+
+  if (start > now) {
+    return 'upcoming';
+  }
+
+  if (end !== null && end < now) {
+    return 'closed';
+  }
+
+  return 'open';
+}
+
+export async function getStudentDashboardData(
+  studentId: string
+): Promise<StudentDashboardData> {
+  const [attendanceResult, eventsResult] = await Promise.all([
+    supabase
+      .from('attendance')
+      .select(
+        `id,
+         event_id,
+         scanned_at,
+         events (
+           id,
+           event_code,
+           title,
+           start_time,
+           end_time
+         )`
+      )
+      .eq('student_id', studentId)
+      .order('scanned_at', { ascending: false }),
+    supabase
+      .from('events')
+      .select('id, event_code, title, start_time, end_time')
+      .order('start_time', { ascending: true })
+  ]);
+
+  const attendanceRows = attendanceResult.data ?? [];
+  const eventRows = eventsResult.data ?? [];
+
+  const recentRecords: AttendanceRecord[] = attendanceRows.map((row: any) => ({
+    id: row.id,
+    eventId: row.event_id,
+    eventTitle: row.events?.title ?? row.event_id,
+    scannedAt: row.scanned_at,
+  }));
+
+  const totalAttended = new Set(recentRecords.map((record) => record.eventId)).size;
+  const presentCount = totalAttended;
+  const lateCount = 0;
+
+  const eligibleEvents = eventRows.filter((event: any) => {
+    if (!event.start_time) {
+      return false;
+    }
+
+    const start = new Date(event.start_time).getTime();
+    const end = event.end_time ? new Date(event.end_time).getTime() : null;
+    const now = Date.now();
+
+    if (start <= now && (!end || end >= now)) {
+      return true;
+    }
+
+    return !!end && end <= now;
+  }).length;
+
+  const attendanceRate = eligibleEvents === 0 ? 0 : Math.min(100, Math.round((totalAttended / eligibleEvents) * 100));
+
+  const upcomingEvents: StudentEventPreview[] = eventRows
+    .filter((event: any) => !!event.start_time)
+    .map((event: any) => ({
+      id: event.id,
+      eventCode: event.event_code,
+      title: event.title,
+      startTime: event.start_time,
+      endTime: event.end_time,
+      status: getEventStatus(event.start_time, event.end_time),
+    }))
+    .filter((event) => event.status === 'open' || event.status === 'upcoming')
+    .slice(0, 3);
+
+  return {
+    totalAttended,
+    presentCount,
+    lateCount,
+    attendanceRate,
+    eligibleEvents,
+    upcomingEvents,
+    recentRecords: recentRecords.slice(0, 5),
+    unreadNotificationCount: 0,
+  };
+}
+
 export async function registerAttendance(
   rawPayload: string,
   studentId: string

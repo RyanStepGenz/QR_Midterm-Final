@@ -7,6 +7,8 @@ export type Event = {
   end: string;
 };
 
+export type EventStatus = 'open' | 'upcoming' | 'closed';
+
 export type CloudEvent = {
   id: string;
   event_code: string;
@@ -16,6 +18,27 @@ export type CloudEvent = {
   created_by: string | null;
   created_at: string;
 };
+
+export function getEventStatus(startTime: string | null, endTime: string | null): EventStatus {
+  const now = Date.now();
+
+  if (!startTime) {
+    return 'closed';
+  }
+
+  const start = new Date(startTime).getTime();
+  const end = endTime ? new Date(endTime).getTime() : null;
+
+  if (start > now) {
+    return 'upcoming';
+  }
+
+  if (end !== null && end < now) {
+    return 'closed';
+  }
+
+  return 'open';
+}
 
 export async function createEvent(
   event: Event
@@ -52,6 +75,33 @@ export async function getEventsByTeacher(
   }
 
   return data as CloudEvent[];
+}
+
+export async function getUpcomingEvents(): Promise<CloudEvent[]> {
+  const { data, error } = await supabase
+    .from('events')
+    .select('*')
+    .order('start_time', { ascending: true });
+
+  if (error || !data) {
+    return [];
+  }
+
+  return (data as CloudEvent[]).filter((event) => !!event.start_time);
+}
+
+export async function getEventById(id: string): Promise<CloudEvent | null> {
+  const { data, error } = await supabase
+    .from('events')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return data as CloudEvent;
 }
 
 export async function getEventByCode(
